@@ -15,6 +15,7 @@ import config
 import database as db
 from filters import IsRegistered
 from services.analyzer import analyze_file, analyze_link, analyze_text, esc
+from services.language import detect_text_language
 
 router = Router()
 
@@ -53,7 +54,14 @@ async def handle_text(message: Message):
             await wait.edit_text(f"❌ Не удалось проверить видео по ссылке: {esc(e)}")
         return
 
-    # Обычный текст
+    # Обычный текст: только казахский, русский, английский
+    if detect_text_language(message.text) is None:
+        await message.answer(
+            "🌐 Бот қазақ, орыс және ағылшын тілдерін ғана қабылдайды.\n"
+            "Бот принимает только казахский, русский и английский.\n"
+            "The bot accepts only Kazakh, Russian and English.")
+        return
+
     wait = await message.answer("⏳ Анализирую...")
     try:
         report = await analyze_text(message.from_user.id, message.text,

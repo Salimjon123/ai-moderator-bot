@@ -40,6 +40,11 @@ _hub = os.path.expanduser("~/.cache/huggingface/hub")
 _models = ["models--cointegrated--rubert-tiny-toxicity",
            "models--Falconsai--nsfw_image_detection",
            "models--openai--clip-vit-base-patch32"]
+try:
+    from config import WHISPER_MODEL as _wm   # модель Whisper тоже должна быть скачана
+    _models.append(f"models--Systran--faster-whisper-{_wm}")
+except Exception:
+    pass
 if all(os.path.isdir(os.path.join(_hub, m)) for m in _models):
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
 

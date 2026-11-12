@@ -56,6 +56,15 @@ STOP_WORDS = {
         "иди сдохни", "сдохни", "выпились", "урод", "чмо", "лох",
         "дебил", "даун", "тупая", "тупой", "жирная", "жирный",
     ],
+    # ---- Қазақша ----
+    "қорлау_және_қорқыту": [
+        "ақымақ", "акымак", "ақмақ", "есек", "иттің баласы", "сасық",
+        "жексұрын", "малғұн", "оңбаған", "найсап", "өлтіремін", "өлтірем",
+        "сабаймын", "ұрып тастаймын", "өліп кет", "жоғал",
+    ],
+    "қазақша_балағат": [
+        "қотақ", "котак", "сігейін", "сікейін", "сиктир", "амың", "аміңді",
+    ],
     "мат": [
         "хуй", "хуе", "хуя", "пизд", "ебат", "ебан", "ебал", "ебу", "ёб",
         "бля", "сука", "суки", "мудак", "мудил", "гандон", "пидор", "шлюх",
@@ -73,8 +82,8 @@ _LOOKALIKE = str.maketrans({"a": "а", "b": "в", "c": "с", "e": "е", "k": "к
 def _normalize(text: str) -> str:
     """Убирает маскировку: латиницу вместо кириллицы, повторы букв, х*й, х.у.й."""
     t = text.lower().replace("ё", "е").translate(_LOOKALIKE)
-    t = re.sub(r"(?<=[а-я])[*.\-_](?=[а-я])", "", t)   # х.у.й -> хуй
-    t = re.sub(r"([а-я])\1{2,}", r"\1", t)             # суууука -> сука
+    t = re.sub(r"(?<=[а-яәғқңөұүһі])[*.\-_](?=[а-яәғқңөұүһі])", "", t)   # х.у.й -> хуй
+    t = re.sub(r"([а-яәғқңөұүһі])\1{2,}", r"\1", t)             # суууука -> сука
     return t
 
 
@@ -89,13 +98,13 @@ def find_danger_words(text: str) -> dict:
         for w in words:
             w_norm = w.lower().replace("ё", "е")
             # слово должно начинаться с начала слова (чтобы "соль" не ловилось в "консоль")
-            pattern = r"(?<![а-яa-z0-9])" + re.escape(w_norm)
+            pattern = r"(?<![а-яәғқңөұүһіa-z0-9])" + re.escape(w_norm)
             if any(re.search(pattern, v) for v in variants):
                 hits.append(w.strip())
         if hits:
             found[category] = sorted(set(hits))
     # Мат со звёздочкой вместо буквы: х*й, п*здец, бл*ть
-    if re.search(r"(?<![а-я])(х\*|п\*зд|бл\*|е\*ан|\*уй)", raw):
+    if re.search(r"(?<![а-яәғқңөұүһі])(х\*|п\*зд|бл\*|е\*ан|\*уй)", raw):
         found.setdefault("мат", []).append("замаскированный мат")
     return found
 
@@ -162,8 +171,8 @@ def check_text(text) -> dict:
     # 3) Итоговый вердикт
     illegal = any(c in categories for c in
                   ("наркотики", "оружие", "казино_и_ставки", "мошенничество"))
-    obscene = "мат" in categories or worst_scores.get("obscenity", 0) >= 0.5
-    if toxicity >= 70 or illegal or obscene or "угрозы_и_буллинг" in categories:
+    obscene = "мат" in categories or "қазақша_балағат" in categories or worst_scores.get("obscenity", 0) >= 0.5
+    if toxicity >= 70 or illegal or obscene or "угрозы_и_буллинг" in categories or "қорлау_және_қорқыту" in categories:
         verdict = "Опасно"
     elif toxicity >= 40 or categories:
         verdict = "Подозрительно"

@@ -23,10 +23,12 @@ if config.GEMINI_API_KEY:
 
 # ---------- Модули коллег ----------
 try:
-    from services.speech import speech_to_text   # + исправление av для Whisper
+    from services.speech import pick_language, speech_to_text, transcribe  # + исправление av
 except ImportError as e:
     logging.warning(f"speech не подключён: {e}")
-    speech_to_text = None
+    speech_to_text = transcribe = pick_language = None
+
+from services.language import NAMES as LANG_NAMES
 
 try:
     from video_to_text import video_to_text
@@ -154,12 +156,13 @@ async def analyze_file(user_id: int, path: str, kind: str, meta: dict = None) ->
         if not speech_to_text:
             return ["🎙 Распознавание речи не подключено."]
         try:
-            spoken = await asyncio.to_thread(speech_to_text, path)
+            spoken, lang = await asyncio.to_thread(transcribe, path)
             if spoken.strip():
                 if meta is not None:
                     meta["transcript"] = spoken
                 parts.append(await analyze_text(user_id, spoken, "speech",
                                                 "🎙 Анализ голоса", meta))
+                parts.append(f"🌐 Язык речи: {LANG_NAMES.get(lang, lang)}")
                 # Опасное показываем сразу как доказательство,
                 # безопасное — по кнопке "Показать текст"
                 if meta is None or meta.get("suspicious"):
@@ -200,7 +203,12 @@ async def analyze_file(user_id: int, path: str, kind: str, meta: dict = None) ->
     # 3) Речь + надписи на экране -> текст -> проверка текста
     if video_to_text and kind != "photo":
         try:
-            spoken = await asyncio.to_thread(video_to_text, path)
+            # Язык речи выбираем только из казахского, русского, английского
+            lang = await asyncio.to_thread(pick_language, path) if pick_language else None
+            spoken = await asyncio.to_thread(video_to_text, path,
+                                             model_size=config.WHISPER_MODEL, language=lang)
+            if lang:
+                parts.append(f"🌐 Язык речи: {LANG_NAMES.get(lang, lang)}")
             if spoken and spoken.strip():
                 parts.append(await analyze_text(user_id, spoken, "speech",
                                                 "🗣 Анализ речи и надписей", meta))
