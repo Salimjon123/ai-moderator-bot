@@ -29,26 +29,22 @@ COMMON_PASSWORDS = {
 }
 
 
-def check_rules(password: str, name: str = "") -> list:
+def check_rules(password: str, name: str = "", lang: str = "ru") -> list:
     """
     Проверяет пароль. Возвращает список правил: [(выполнено?, текст правила), ...]
+    Текст правил — на языке пользователя (lang).
     """
+    from i18n import t
     p = password
     return [
         (config.PASSWORD_MIN_LENGTH <= len(p) <= 64,
-         f"Не меньше {config.PASSWORD_MIN_LENGTH} символов (сейчас {len(p)})"),
-        (any(c.isdigit() for c in p),
-         "Хотя бы одна цифра (0-9)"),
-        (any(c in string.ascii_uppercase for c in p),
-         "Хотя бы одна заглавная буква (A-Z)"),
-        (any(c in string.ascii_lowercase for c in p),
-         "Хотя бы одна строчная буква (a-z)"),
-        (all(c in ALLOWED_CHARS for c in p),
-         "Только английские буквы, цифры и символы — без русских букв и пробелов"),
-        (p.lower() not in COMMON_PASSWORDS,
-         "Не слишком простой пароль (не 12345678, password, qwerty123)"),
-        (not name or name.lower() not in p.lower(),
-         "Не содержит твоё имя"),
+         t("r_len", lang, min=config.PASSWORD_MIN_LENGTH, n=len(p))),
+        (any(c.isdigit() for c in p), t("r_digit", lang)),
+        (any(c in string.ascii_uppercase for c in p), t("r_upper", lang)),
+        (any(c in string.ascii_lowercase for c in p), t("r_lower", lang)),
+        (all(c in ALLOWED_CHARS for c in p), t("r_chars", lang)),
+        (p.lower() not in COMMON_PASSWORDS, t("r_common", lang)),
+        (not name or name.lower() not in p.lower(), t("r_name", lang)),
     ]
 
 
@@ -56,13 +52,13 @@ def is_strong(password: str, name: str = "") -> bool:
     return all(ok for ok, _ in check_rules(password, name))
 
 
-def rules_message(password: str, name: str = "") -> str:
+def rules_message(password: str, name: str = "", lang: str = "ru") -> str:
     """Понятное сообщение: какие правила выполнены ✅, а какие нет ❌."""
-    lines = ["❌ <b>Пароль не подходит.</b> Требования:\n"]
-    for ok, text in check_rules(password, name):
+    from i18n import t
+    lines = [t("pw_bad", lang)]
+    for ok, text in check_rules(password, name, lang):
         lines.append(f"{'✅' if ok else '❌'} {text}")
-    lines.append("\nПример надёжного пароля: <code>Salem2026!</code>\n"
-                 "Придумай свой и введи ещё раз:")
+    lines.append(t("pw_example", lang))
     return "\n".join(lines)
 
 

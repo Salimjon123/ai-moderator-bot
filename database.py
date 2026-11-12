@@ -54,6 +54,8 @@ def init_db():
     columns = [r["name"] for r in conn.execute("PRAGMA table_info(users)")]
     if "password_hash" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+    if "lang" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN lang TEXT")   # kk / ru / en
     media_columns = [r["name"] for r in conn.execute("PRAGMA table_info(media)")]
     if "transcript" not in media_columns:
         conn.execute("ALTER TABLE media ADD COLUMN transcript TEXT")  # распознанный текст
@@ -66,10 +68,11 @@ def add_user(user_id, username, full_name, name, phone, password_hash):
     conn = _conn()
     conn.execute(
         """INSERT OR REPLACE INTO users
-           (user_id, username, full_name, name, phone, password_hash, is_admin, registered_at)
+           (user_id, username, full_name, name, phone, password_hash, is_admin, lang, registered_at)
            VALUES (?, ?, ?, ?, ?, ?,
-                   COALESCE((SELECT is_admin FROM users WHERE user_id = ?), 0), ?)""",
-        (user_id, username, full_name, name, phone, password_hash, user_id, _now()),
+                   COALESCE((SELECT is_admin FROM users WHERE user_id = ?), 0),
+                   (SELECT lang FROM users WHERE user_id = ?), ?)""",
+        (user_id, username, full_name, name, phone, password_hash, user_id, user_id, _now()),
     )
     conn.commit()
     conn.close()
@@ -104,6 +107,22 @@ def set_admin(user_id, value: bool, username=None, full_name=None):
                  (1 if value else 0, user_id))
     conn.commit()
     conn.close()
+
+
+def set_lang(user_id, lang):
+    """Сохраняет выбранный язык (kk/ru/en). Работает и до регистрации."""
+    conn = _conn()
+    conn.execute("INSERT OR IGNORE INTO users (user_id, registered_at) VALUES (?, ?)",
+                 (user_id, _now()))
+    conn.execute("UPDATE users SET lang = ? WHERE user_id = ?", (lang, user_id))
+    conn.commit()
+    conn.close()
+
+
+def get_lang(user_id) -> str:
+    """Язык пользователя; если ещё не выбран — русский."""
+    user = get_user(user_id)
+    return (user["lang"] if user and user["lang"] else None) or "ru"
 
 
 def all_user_ids():

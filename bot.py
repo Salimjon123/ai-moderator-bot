@@ -11,6 +11,7 @@
   keyboards.py            - кнопки
   services/analyzer.py    - анализ и отчёты, подключение модулей команды
   services/password.py    - правила пароля (как Gmail/Apple) и шифрование
+  services/antiflood.py   - защита от спама (антифлуд)
   handlers/registration.py - регистрация (/start)
   handlers/admin.py        - админка (/adminsalim)
   handlers/check.py        - проверка текста и файлов
@@ -60,6 +61,7 @@ import config
 import database as db
 from handlers import admin, check, registration
 from services.analyzer import warm_up
+from services.antiflood import AntiFloodMiddleware
 
 
 async def main():
@@ -75,11 +77,32 @@ async def main():
     bot = Bot(config.TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher()
 
+    # Антифлуд: работает раньше всех обработчиков
+    antiflood = AntiFloodMiddleware()
+    dp.message.outer_middleware(antiflood)
+    dp.callback_query.outer_middleware(antiflood)
+
     # Порядок важен: check подключается последним,
     # потому что в нём ответ "Сначала зарегистрируйся" для всех остальных сообщений
     dp.include_router(admin.router)
     dp.include_router(registration.router)
     dp.include_router(check.router)
+
+    # Описание бота в пустом чате (до нажатия /start) и в профиле
+    # Telegram сам показывает описание на языке приложения человека:
+    # русский интерфейс -> ru, английский -> en, остальные -> қазақша
+    from aiogram.types import BotCommand
+    from i18n import t
+    try:
+        for code, lang in ((None, "kk"), ("ru", "ru"), ("en", "en")):
+            await bot.set_my_description(t("welcome", lang), language_code=code)
+            await bot.set_my_short_description(t("short_description", lang), language_code=code)
+        await bot.set_my_commands([
+            BotCommand(command="start", description="Бастау / Начать / Start"),
+            BotCommand(command="language", description="Тіл / Язык / Language"),
+        ])
+    except Exception as e:
+        logging.warning(f"Описание бота не обновлено: {e}")
 
     print("Бот запущен!")
     await dp.start_polling(bot)

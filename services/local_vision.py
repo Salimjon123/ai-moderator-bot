@@ -103,4 +103,8 @@ def check_frames(path: str, kind: str = "video") -> dict:
         "is_danger": bool(found),
         "reasons": reasons,
         "frames_checked": len(frames),
+        # то же самое, но по частям — чтобы бот перевёл на язык пользователя
+        "found": [{"name": n, "count": len(s), "conf": round(max(s) * 100)}
+                  for n, s in sorted(found.items(), key=lambda x: -max(x[1]))],
+        "maybe": list(maybe),
     }

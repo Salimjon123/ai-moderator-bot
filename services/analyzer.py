@@ -28,7 +28,7 @@ except ImportError as e:
     logging.warning(f"speech не подключён: {e}")
     speech_to_text = transcribe = pick_language = None
 
-from services.language import NAMES as LANG_NAMES
+from i18n import CATEGORIES, FRAME_NAMES, LABELS, SPEECH_LANGS, VERDICTS, t, tr
 
 try:
     from video_to_text import video_to_text
@@ -67,51 +67,63 @@ def esc(s) -> str:
 
 
 VERDICT_EMOJI = {"Безопасно": "🟢", "Подозрительно": "🟡", "Опасно": "🔴"}
-LABEL_NAMES = {"insult": "Оскорбления", "obscenity": "Мат",
-               "threat": "Угрозы", "dangerous": "Опасный контент"}
 
 
-def format_report(r: dict, title: str) -> str:
-    """Превращает результат check_text в сообщение для Telegram."""
+def format_report(r: dict, title: str, lang: str = "ru") -> str:
+    """Превращает результат check_text в сообщение для Telegram (на языке lang)."""
+    verdict = tr(VERDICTS, r["verdict"], lang)
     lines = [
         f"<b>{title}</b>",
-        f"{VERDICT_EMOJI.get(r['verdict'], '⚪')} <b>Вердикт: {r['verdict']}</b>",
-        f"Токсичность: <b>{r['toxicity_percent']}%</b>",
+        f"{VERDICT_EMOJI.get(r['verdict'], '⚪')} <b>{t('verdict', lang)}: {verdict}</b>",
+        f"{t('toxicity', lang)}: <b>{r['toxicity_percent']}%</b>",
     ]
     for key, value in r.get("labels", {}).items():
-        if key in LABEL_NAMES:
-            lines.append(f"• {LABEL_NAMES[key]}: {value}%")
+        if key in LABELS:
+            lines.append(f"• {tr(LABELS, key, lang)}: {value}%")
     if r.get("danger_categories"):
-        lines.append("\n⚠️ <b>Найдены опасные слова:</b>")
+        lines.append("\n" + t("found_words", lang))
         for cat, words in r["danger_categories"].items():
-            lines.append(f"• {esc(cat.replace('_', ' ').capitalize())}: "
-                         f"{esc(', '.join(words))}")
+            name = tr(CATEGORIES, cat, lang)
+            if name == cat:
+                name = cat.replace("_", " ").capitalize()
+            lines.append(f"• {esc(name)}: {esc(', '.join(words))}")
     return "\n".join(lines)
 
 
-def format_links(r: dict) -> str:
+def format_links(r: dict, lang: str = "ru") -> str:
     """Отчёт antifraud.check_links."""
     if not r.get("urls"):
         return ""
     if r.get("is_phishing"):
-        head = "🔴 Похоже на фишинг"
+        head = t("links_phish", lang)
     elif r.get("is_suspicious"):
-        head = "🟡 Подозрительные ссылки"
+        head = t("links_susp", lang)
     else:
-        head = "🟢 Ссылки выглядят нормально"
-    lines = [f"🔗 <b>Проверка ссылок:</b> {head} (риск {r.get('score', 0)}%)"]
+        head = t("links_ok", lang)
+    lines = [f"{t('links_head', lang)} {head} ({t('risk', lang)} {r.get('score', 0)}%)"]
     for reason in r.get("reasons", [])[:5]:
         lines.append(f"• {esc(reason)}")
     return "\n".join(lines)
 
 
-def format_vision(r: dict) -> str:
-    """Отчёт vision_check.check_video_safety."""
+def format_vision(r: dict, lang: str = "ru", gemini: bool = False) -> str:
+    """Отчёт по кадрам (local_vision или Gemini)."""
     emoji = "🔴" if r.get("is_danger") else "🟢"
-    lines = [f"👁 <b>Анализ кадров:</b> {emoji} риск {r.get('score', 0)}% "
-             f"(кадров: {r.get('frames_checked', 0)})"]
-    for reason in r.get("reasons", [])[:5]:
-        lines.append(f"• {esc(reason)}")
+    head = t("frames_head_gemini" if gemini else "frames_head", lang)
+    lines = [f"{head} {emoji} {t('risk', lang)} {r.get('score', 0)}% "
+             f"({t('frames_n', lang, n=r.get('frames_checked', 0))})"]
+    if "found" in r:   # локальная проверка — переводим по частям
+        for h in r["found"]:
+            lines.append("• " + t("frame_hit", lang, name=tr(FRAME_NAMES, h["name"], lang),
+                                  n=h["count"], total=r.get("frames_checked", 0), conf=h["conf"]))
+        if not r["found"]:
+            lines.append("• " + t("frames_clean", lang))
+            if r.get("maybe"):
+                names = ", ".join(tr(FRAME_NAMES, n, lang) for n in r["maybe"])
+                lines.append("• " + t("frames_maybe", lang, names=names))
+    else:              # Gemini — причины как есть
+        for reason in r.get("reasons", [])[:5]:
+            lines.append(f"• {esc(reason)}")
     return "\n".join(lines)
 
 
@@ -125,6 +137,7 @@ def _mark(meta, danger: bool, suspicious: bool = False):
 async def analyze_text(user_id: int, text: str, kind: str, title: str,
                        meta: dict = None) -> str:
     """Проверяет текст, сохраняет результат в базу, возвращает отчёт."""
+    lang = db.get_lang(user_id)
     lines = [l for l in text.split("\n") if l.strip()]
     # Несколько строк от пользователя = несколько комментариев
     data = lines if (kind == "text" and len(lines) > 1) else text
@@ -134,10 +147,10 @@ async def analyze_text(user_id: int, text: str, kind: str, title: str,
     db.save_check(user_id, kind, text, result)
     _mark(meta, result["verdict"] == "Опасно", result["verdict"] != "Безопасно")
 
-    report = format_report(result, title)
+    report = format_report(result, title, lang)
     if check_links:
         lr = await asyncio.to_thread(check_links, text)
-        links = format_links(lr)
+        links = format_links(lr, lang)
         if links:
             report += "\n\n" + links
             _mark(meta, lr.get("is_phishing", False), lr.get("is_suspicious", False))
@@ -147,6 +160,7 @@ async def analyze_text(user_id: int, text: str, kind: str, title: str,
 async def analyze_file(user_id: int, path: str, kind: str, meta: dict = None) -> list:
     """Анализ видео, фото и аудио. Возвращает список частей отчёта.
     meta (необязательно) — сюда записывается: danger, suspicious, transcript."""
+    lang = db.get_lang(user_id)
     parts = []
     if not path:
         return parts
@@ -154,24 +168,23 @@ async def analyze_file(user_id: int, path: str, kind: str, meta: dict = None) ->
     # Аудио и голосовые: речь -> текст -> проверка текста
     if kind in ("audio", "voice"):
         if not speech_to_text:
-            return ["🎙 Распознавание речи не подключено."]
+            return [t("speech_missing", lang)]
         try:
-            spoken, lang = await asyncio.to_thread(transcribe, path)
+            spoken, speech_lang = await asyncio.to_thread(transcribe, path)
             if spoken.strip():
                 if meta is not None:
                     meta["transcript"] = spoken
                 parts.append(await analyze_text(user_id, spoken, "speech",
-                                                "🎙 Анализ голоса", meta))
-                parts.append(f"🌐 Язык речи: {LANG_NAMES.get(lang, lang)}")
-                # Опасное показываем сразу как доказательство,
-                # безопасное — по кнопке "Показать текст"
-                if meta is None or meta.get("suspicious"):
-                    parts.append(f"<i>Распознано: {esc(spoken[:300])}</i>")
+                                                t("title_voice", lang), meta))
+                parts.append(t("speech_lang", lang, lang=tr(SPEECH_LANGS, speech_lang, lang)))
+                # Текст показывается по кнопке "Показать текст" (и для опасного тоже)
+                if meta is None:
+                    parts.append(f"<i>{t('recognized', lang)}: {esc(spoken[:300])}</i>")
             else:
-                parts.append("🎙 Речь в аудио не найдена.")
+                parts.append(t("no_speech_audio", lang))
         except Exception as e:
             logging.exception("speech_to_text")
-            parts.append(f"🎙 Не удалось распознать речь: {esc(e)}")
+            parts.append(t("speech_error", lang, e=esc(e)))
         return parts
 
     if kind not in ("video", "video_note", "photo"):
@@ -181,40 +194,40 @@ async def analyze_file(user_id: int, path: str, kind: str, meta: dict = None) ->
     if check_frames:
         try:
             vis = await asyncio.to_thread(check_frames, path, kind)
-            parts.append(format_vision(vis))
+            parts.append(format_vision(vis, lang))
             _mark(meta, vis["is_danger"])
             db.save_check(user_id, "frames", "; ".join(vis["reasons"]), {
                 "verdict": "Опасно" if vis["is_danger"] else "Безопасно",
                 "toxicity_percent": vis["score"], "danger_categories": {}})
         except Exception as e:
             logging.exception("local_vision")
-            parts.append(f"👁 Не удалось проверить кадры: {esc(e)}")
+            parts.append(t("frames_error", lang, e=esc(e)))
 
     # 2) Дополнительно Gemini — только если задан ключ
     if vision_check and os.getenv("GEMINI_API_KEY") and kind != "photo":
         try:
             vis = await asyncio.to_thread(vision_check, path)
-            parts.append(format_vision(vis).replace("Анализ кадров", "Анализ кадров (Gemini)"))
+            parts.append(format_vision(vis, lang, gemini=True))
             _mark(meta, vis.get("is_danger", False))
         except Exception as e:
             logging.exception("vision_check")
-            parts.append(f"👁 Gemini: не удалось проверить кадры: {esc(e)}")
+            parts.append("Gemini: " + t("frames_error", lang, e=esc(e)))
 
     # 3) Речь + надписи на экране -> текст -> проверка текста
     if video_to_text and kind != "photo":
         try:
             # Язык речи выбираем только из казахского, русского, английского
-            lang = await asyncio.to_thread(pick_language, path) if pick_language else None
+            speech_lang = await asyncio.to_thread(pick_language, path) if pick_language else None
             spoken = await asyncio.to_thread(video_to_text, path,
-                                             model_size=config.WHISPER_MODEL, language=lang)
-            if lang:
-                parts.append(f"🌐 Язык речи: {LANG_NAMES.get(lang, lang)}")
+                                             model_size=config.WHISPER_MODEL, language=speech_lang)
+            if speech_lang:
+                parts.append(t("speech_lang", lang, lang=tr(SPEECH_LANGS, speech_lang, lang)))
             if spoken and spoken.strip():
                 parts.append(await analyze_text(user_id, spoken, "speech",
-                                                "🗣 Анализ речи и надписей", meta))
-                parts.append(f"<i>Распознано: {esc(spoken[:300])}</i>")
+                                                t("title_speech_video", lang), meta))
+                parts.append(f"<i>{t('recognized', lang)}: {esc(spoken[:300])}</i>")
             else:
-                parts.append("🗣 Речи и надписей в видео не найдено.")
+                parts.append(t("no_speech_video", lang))
         except Exception as e:
             # Например, не скачалась модель EasyOCR — тогда распознаём хотя бы речь
             logging.exception("video_to_text")
@@ -222,21 +235,22 @@ async def analyze_file(user_id: int, path: str, kind: str, meta: dict = None) ->
                 spoken = await asyncio.to_thread(speech_to_text, path) if speech_to_text else ""
                 if spoken.strip():
                     parts.append(await analyze_text(user_id, spoken, "speech",
-                                                    "🗣 Анализ речи (без надписей)", meta))
-                    parts.append(f"<i>Распознано: {esc(spoken[:300])}</i>")
+                                                    t("title_speech_only", lang), meta))
+                    parts.append(f"<i>{t('recognized', lang)}: {esc(spoken[:300])}</i>")
                 else:
-                    parts.append("🗣 Речи в видео не найдено.")
+                    parts.append(t("no_speech_video2", lang))
             except Exception as e2:
                 logging.exception("speech_to_text")
-                parts.append(f"🗣 Не удалось распознать речь: {esc(e2)}")
+                parts.append(t("speech_error", lang, e=esc(e2)))
     return parts
 
 
 async def analyze_link(user_id: int, url: str, meta: dict = None) -> list:
     """Скачивает видео по ссылке (YouTube/TikTok/Instagram) и проверяет всё.
     meta (необязательно) — сюда записывается: danger, media_id, video_path."""
+    lang = db.get_lang(user_id)
     if not parse_url:
-        return ["❌ Модуль parser.py не подключён — ссылки не проверяются."]
+        return [t("parser_missing", lang)]
 
     folder = os.path.join(config.MEDIA_DIR, "links")
     warning = ""
@@ -246,9 +260,7 @@ async def analyze_link(user_id: int, url: str, meta: dict = None) -> list:
     except Exception as e:
         # Видео не скачалось — проверяем хотя бы название, описание и комментарии
         logging.warning(f"Видео не скачано: {e}")
-        warning = ("⚠️ Само видео скачать не удалось (YouTube не отдал файл), "
-                   "проверены только название, описание и комментарии.\n"
-                   "Чтобы видео скачивалось, выполни в терминале: pip install -U deno 'yt-dlp[default]'")
+        warning = t("link_dl_warn", lang)
         info = await asyncio.to_thread(parse_url, url, download_video=False,
                                        output_dir=folder, max_comments=10)
     path = info.get("video_path")
@@ -257,8 +269,8 @@ async def analyze_link(user_id: int, url: str, meta: dict = None) -> list:
         meta["media_id"] = media_id
         meta["video_path"] = path
 
-    parts = [f"🎬 <b>{esc(info.get('title') or 'Видео')}</b>\n"
-             f"Канал: {esc(info['metadata'].get('channel') or '—')}"]
+    parts = [f"🎬 <b>{esc(info.get('title') or t('video_word', lang))}</b>\n"
+             f"{t('channel', lang)}: {esc(info['metadata'].get('channel') or '—')}"]
 
     # Название, описание и комментарии
     text = "\n".join(x for x in [info.get("title"), info.get("description")] if x)
@@ -266,16 +278,16 @@ async def analyze_link(user_id: int, url: str, meta: dict = None) -> list:
                 for c in info.get("comments") or []]
     if text.strip():
         parts.append(await analyze_text(user_id, text, "description",
-                                        "📄 Анализ названия и описания", meta))
+                                        t("title_desc", lang), meta))
     if comments:
         parts.append(await analyze_text(user_id, "\n".join(comments), "text",
-                                        f"💬 Анализ комментариев ({len(comments)})", meta))
+                                        t("title_comments", lang, n=len(comments)), meta))
 
     # Само видео
     if path:
         parts += await analyze_file(user_id, path, "video", meta)
     else:
-        parts.append(warning or "⚠️ Видео не удалось скачать, проверены только текст и описание.")
+        parts.append(warning or t("link_dl_warn", lang))
     return parts
 
 

@@ -29,6 +29,12 @@ ALLOWED_LANGUAGES = ("kk", "ru", "en")
 # "small" намного лучше понимает казахский, чем "base" (скачивается один раз, ~460 МБ).
 WHISPER_MODEL = "small"
 
+# Антифлуд: не больше FLOOD_LIMIT сообщений за FLOOD_WINDOW секунд,
+# иначе бот молчит FLOOD_MUTE секунд
+FLOOD_LIMIT = 5
+FLOOD_WINDOW = 10
+FLOOD_MUTE = 30
+
 # ===== Секреты =====
 # Токен и ключи лежат в config_local.py — этот файл НЕ загружается на GitHub
 # (он в .gitignore). Чтобы запустить бота на другом компьютере, создай
