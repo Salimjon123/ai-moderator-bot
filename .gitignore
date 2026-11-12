@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+bot.db
+media/
+config_local.py
+.idea/workspace.xml
+.idea/dataSources.xml
