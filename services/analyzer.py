@@ -54,6 +54,8 @@ except ImportError as e:
     logging.warning(f"parser не подключён: {e}")
     parse_url = None
 
+from services.url_reputation import check_url as vt_check_url
+
 try:
     from antifraud import check_links
 except ImportError as e:
@@ -144,16 +146,39 @@ async def analyze_text(user_id: int, text: str, kind: str, title: str,
 
     # Модель медленная — запускаем в отдельном потоке, чтобы бот не зависал
     result = await asyncio.to_thread(check_text, data)
+
+    # Ссылки: правила antifraud.py + (если есть ключ) база VirusTotal
+    lr = await asyncio.to_thread(check_links, text) if check_links else {}
+    for url in lr.get("urls", [])[:3]:
+        vt = await asyncio.to_thread(vt_check_url, url)
+        if vt is None:
+            continue
+        if vt["malicious"] >= 2:
+            vt_score = 90
+        elif vt["malicious"] or vt["suspicious"]:
+            vt_score = 60
+        else:
+            vt_score = 0
+        lr["reasons"] = lr.get("reasons", []) + [
+            t("vt_bad", lang, url=url, n=vt["malicious"] + vt["suspicious"], total=vt["total"])
+            if vt_score else t("vt_clean", lang, url=url)]
+        lr["score"] = max(lr.get("score", 0), vt_score)
+        lr["is_phishing"] = lr["score"] >= 70
+        lr["is_suspicious"] = lr["score"] >= 40
+
+    # Опасная ссылка поднимает общий вердикт: фишинг -> "Опасно", подозрительная -> "Подозрительно"
+    if lr.get("is_phishing"):
+        result["verdict"] = "Опасно"
+    elif lr.get("is_suspicious") and result["verdict"] == "Безопасно":
+        result["verdict"] = "Подозрительно"
+
     db.save_check(user_id, kind, text, result)
     _mark(meta, result["verdict"] == "Опасно", result["verdict"] != "Безопасно")
 
     report = format_report(result, title, lang)
-    if check_links:
-        lr = await asyncio.to_thread(check_links, text)
-        links = format_links(lr, lang)
-        if links:
-            report += "\n\n" + links
-            _mark(meta, lr.get("is_phishing", False), lr.get("is_suspicious", False))
+    links = format_links(lr, lang) if lr else ""
+    if links:
+        report += "\n\n" + links
     return report
 
 
